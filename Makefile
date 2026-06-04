@@ -42,3 +42,4 @@ rk915-objs := \
 	src/firmware.o \
 	src/init.o \
 	src/sdio.o \
+	src/vendor_storage.o

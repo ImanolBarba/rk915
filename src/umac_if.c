@@ -17,6 +17,7 @@
 #include <linux/udp.h>
 #include <linux/version.h>
 #include <linux/wireless.h>
+#include <linux/nvmem-consumer.h>
 #include <net/iw_handler.h>
 
 #include <net/cfg80211.h>
@@ -31,6 +32,7 @@
 #include "hal_io.h"
 #include "if_io.h"
 #include "hal_common.h"
+#include "vendor_storage.h"
 
 #define UMAC_IF_TAG "UMAC_IF"
 
@@ -41,42 +43,73 @@ int __weak rockchip_wifi_mac_addr(unsigned char *buf)
 
 static int get_mac_from_serial(unsigned char *mac)
 {
-	extern unsigned int system_serial_high;
-	extern unsigned int system_serial_low;
-	unsigned int hash = 0;
-	int i;
-	u8 serial_bytes[8];
+	/* Read factory WiFi MAC from Rockchip vendor storage (eMMC).
+	 * Falls through to next source if vendor storage is not found
+	 * or doesn't contain a WiFi MAC entry. */
+	return rkvs_read_wifi_mac(mac);
+}
 
-	/* Use system_serial_high and system_serial_low from /proc/cpuinfo */
-	if (system_serial_high == 0 && system_serial_low == 0)
+/**
+ * get_mac_from_soc_id - derive a deterministic MAC from the SoC OTP chip ID
+ *
+ * Reads the unique SoC ID from the nvmem cell named "soc-id" on the
+ * "rockchip,rk915" DT node. XOR-folds the 16-byte ID with a fixed salt
+ * to produce a 6-byte locally-administered unicast MAC address.
+ *
+ * Returns 0 on success (MAC written to @mac), negative on failure.
+ */
+static int get_mac_from_soc_id(unsigned char *mac)
+{
+	struct device_node *np;
+	struct nvmem_cell *cell;
+	void *data;
+	size_t len;
+	u8 *id;
+
+	np = of_find_compatible_node(NULL, NULL, "rockchip,rk915");
+	if (!np)
 		return -ENODEV;
 
-	/* Convert 64-bit serial to bytes for hashing */
-	serial_bytes[0] = (system_serial_high >> 24) & 0xff;
-	serial_bytes[1] = (system_serial_high >> 16) & 0xff;
-	serial_bytes[2] = (system_serial_high >> 8) & 0xff;
-	serial_bytes[3] = system_serial_high & 0xff;
-	serial_bytes[4] = (system_serial_low >> 24) & 0xff;
-	serial_bytes[5] = (system_serial_low >> 16) & 0xff;
-	serial_bytes[6] = (system_serial_low >> 8) & 0xff;
-	serial_bytes[7] = system_serial_low & 0xff;
+	cell = of_nvmem_cell_get(np, "soc-id");
+	of_node_put(np);
+	if (IS_ERR(cell)) {
+		RPU_INFO_UMACIF("RK915: SoC ID nvmem cell not available (%ld)\n",
+				PTR_ERR(cell));
+		return PTR_ERR(cell);
+	}
 
-	/* Print serial number for debugging */
-	RPU_INFO_UMACIF("RK915: Generating MAC from /proc/cpuinfo serial: %08x%08x\n",
-			system_serial_high, system_serial_low);
+	data = nvmem_cell_read(cell, &len);
+	nvmem_cell_put(cell);
+	if (IS_ERR(data))
+		return PTR_ERR(data);
 
-	/* Hash the 8 bytes */
-	for (i = 0; i < 8; i++)
-		hash = hash * 131 + serial_bytes[i];
+	if (len < 16) {
+		RPU_ERROR_UMACIF("RK915: SoC ID too short (%zu bytes, need 16)\n", len);
+		kfree(data);
+		return -EINVAL;
+	}
 
-	mac[0] = 0x02;
-	mac[1] = 0x00;
-	mac[2] = (hash >> 24) & 0xff;
-	mac[3] = (hash >> 16) & 0xff;
-	mac[4] = (hash >> 8) & 0xff;
-	mac[5] = hash & 0xff;
+	id = data;
 
-	RPU_INFO_UMACIF("RK915: Hash value = 0x%08x, MAC prefix = 02:00\n", hash);
+	/*
+	 * XOR-fold 16-byte SoC ID to 6 bytes with salt "rk915w".
+	 * Not cryptographic — just needs to be deterministic and
+	 * produce distinct MACs for distinct SoC IDs.
+	 */
+	mac[0] = id[0] ^ id[6]  ^ id[12] ^ 'r';
+	mac[1] = id[1] ^ id[7]  ^ id[13] ^ 'k';
+	mac[2] = id[2] ^ id[8]  ^ id[14] ^ '9';
+	mac[3] = id[3] ^ id[9]  ^ id[15] ^ '1';
+	mac[4] = id[4] ^ id[10] ^ '5';
+	mac[5] = id[5] ^ id[11] ^ 'w';
+
+	/* Locally administered, unicast */
+	mac[0] = (mac[0] & 0xFE) | 0x02;
+
+	kfree(data);
+
+	if (!is_valid_ether_addr(mac))
+		return -EINVAL;
 
 	return 0;
 }
@@ -2272,17 +2305,28 @@ void init_mac_addr(void)
 		}
 	}
 
-	/* Priority 2: Generate from device serial number (stable & unique per device) */
+	/* Priority 2: Read factory MAC from Rockchip vendor storage on eMMC */
 	if (!mac_set) {
 		if (get_mac_from_serial(vif_macs[0]) == 0) {
 			mac_set = true;
-			mac_source = "device serial number hash";
+			mac_source = "Rockchip vendor storage (eMMC)";
 		} else {
-			RPU_INFO_UMACIF("RK915: Device serial number not available, trying next method\n");
+			RPU_INFO_UMACIF("RK915: Vendor storage MAC not available, trying next method\n");
 		}
 	}
 
-	/* Priority 3: Rockchip BSP function (for compatibility) */
+	/* Priority 3: Derive from SoC OTP chip ID (deterministic, persistent) */
+	if (!mac_set) {
+		if (get_mac_from_soc_id(vif_macs[0]) == 0) {
+			RPU_INFO_UMACIF("RK915: MAC address derived from SoC OTP ID: %pM\n", vif_macs[0]);
+			mac_set = true;
+			mac_source = "SoC OTP ID (derived)";
+		} else {
+			RPU_INFO_UMACIF("RK915: SoC OTP ID not available, trying next method\n");
+		}
+	}
+
+	/* Priority 4: Rockchip BSP function (for compatibility) */
 	if (!mac_set) {
 		if (rockchip_wifi_mac_addr(vif_macs[0]) == 0 && is_valid_ether_addr(vif_macs[0])) {
 			RPU_INFO_UMACIF("RK915: MAC address from rockchip_wifi_mac_addr: %pM\n", vif_macs[0]);
@@ -2293,7 +2337,7 @@ void init_mac_addr(void)
 		}
 	}
 
-	/* Priority 4: Random MAC (fallback) */
+	/* Priority 5: Random MAC (fallback) */
 	if (!mac_set) {
 		eth_random_addr(vif_macs[0]);
 		RPU_INFO_UMACIF("RK915: Generated random MAC address\n");
