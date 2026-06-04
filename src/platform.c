@@ -22,10 +22,14 @@
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/mmc/host.h>
+#include <linux/mmc/sdio_func.h>
 
 #include "core.h"
 #include "if_io.h"
 #include "platform.h"
+
+/* Track whether we're using SDIO in-band IRQ vs OOB GPIO IRQ */
+static bool using_sdio_inband_irq;
 
 extern int hal_irq_handler(struct hal_priv *p);
 
@@ -187,6 +191,13 @@ static irqreturn_t hal_interrupt(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+/* SDIO in-band IRQ handler wrapper — sdio_claim_irq() expects
+ * void (*handler)(struct sdio_func *), not irqreturn_t. */
+static void hal_sdio_interrupt(struct sdio_func *func)
+{
+	hal_irq_handler(hpriv);
+}
+
 void rk915_irq_enable(int enable)
 {
 	/*if (enable) {
@@ -205,12 +216,24 @@ int rk915_register_irq(struct host_io_info *host)
 		ret = devm_request_irq(host->dev, host->irq, hal_interrupt,
 				       IRQF_TRIGGER_RISING, "rk915", hpriv);
 		if (ret == 0) {
+			using_sdio_inband_irq = false;
 			host->irq_request = true;
 			RPU_INFO_MAIN("OOB IRQ %d registered\n", host->irq);
 		}
 	} else {
-		RPU_WARN_MAIN("No OOB IRQ available, interrupt-driven receive disabled\n");
-		ret = 0;
+		/* No OOB IRQ — use SDIO in-band interrupt (DAT[1] line) */
+		struct sdio_func *func = (struct sdio_func *)host->priv_data;
+
+		sdio_claim_host(func);
+		ret = sdio_claim_irq(func, hal_sdio_interrupt);
+		sdio_release_host(func);
+		if (ret == 0) {
+			using_sdio_inband_irq = true;
+			host->irq_request = true;
+			RPU_INFO_MAIN("SDIO in-band IRQ registered\n");
+		} else {
+			RPU_ERROR_MAIN("sdio_claim_irq failed: %d\n", ret);
+		}
 	}
 
 	return ret;
@@ -219,7 +242,15 @@ int rk915_register_irq(struct host_io_info *host)
 int rk915_free_irq(struct host_io_info *host)
 {
 	if (host->irq_request) {
-		devm_free_irq(host->dev, host->irq, hpriv);
+		if (using_sdio_inband_irq) {
+			struct sdio_func *func = (struct sdio_func *)host->priv_data;
+
+			sdio_claim_host(func);
+			sdio_release_irq(func);
+			sdio_release_host(func);
+		} else {
+			devm_free_irq(host->dev, host->irq, hpriv);
+		}
 		host->irq_request = false;
 	}
 
