@@ -8,7 +8,7 @@
 #include <linux/err.h>
 #include <linux/syscalls.h>
 #include <linux/fs.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/sched.h>
 #include <linux/kthread.h>
 #include <linux/workqueue.h>
@@ -176,15 +176,13 @@ int rk915_probe(struct platform_device *pdev)
 	return 0;
 }
 
-int rk915_remove(struct platform_device *pdev)
+void rk915_remove(struct platform_device *pdev)
 {
 	RPU_INFO_MAIN("%s\n", __func__);
 
 	hal_ops.deinit(NULL);
 
 	rk915_free_irq(hpriv->io_info);
-
-	return 0;
 }
 
 void rk915_shutdown(struct platform_device *pdev)
@@ -205,11 +203,7 @@ MODULE_DEVICE_TABLE(platform, rk915_id_table);
 static struct platform_driver rk915_driver =
 {
     .probe = rk915_probe,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
-    .remove = __devexit_p(rk915_remove),
-#else
     .remove = rk915_remove,
-#endif
     .shutdown = rk915_shutdown,
     .id_table = rk915_id_table,
     .driver = {
@@ -226,7 +220,6 @@ static int __init rk915_init(void)
 	RPU_INFO_MAIN("==== Launching Wi-Fi driver! (Powered by Rockchip) ====\n");
 	RPU_INFO_MAIN("=======================================================\n");
 	RPU_INFO_MAIN("RK915 WiFi Ver: %s\n", VERSION_INFO);
-	RPU_INFO_MAIN("Build time: %s %s\n", __DATE__, __TIME__);
 
 	ret = rk915_core_init();
 	if (ret) {
@@ -283,6 +276,4 @@ module_param_named(jtag, m0_jtag_enable, bool, 0644);
 MODULE_AUTHOR("Rockchips");
 MODULE_DESCRIPTION("Driver for Rockchips RK915 SDIO WiFi Devices");
 MODULE_LICENSE("GPL");
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
-MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
-#endif
+MODULE_IMPORT_NS("VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver");

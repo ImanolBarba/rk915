@@ -13,6 +13,7 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/of_platform.h>
+#include <linux/of.h>
 
 #include "core.h"
 #include "utils.h"
@@ -1560,11 +1561,7 @@ int rpu_prog_ba_session_data(unsigned int op,
 
 #ifdef ENABLE_KEEP_ALIVE
 extern void rpu_send_nullframe(struct img_priv *priv);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 void keep_alive_expiry(struct timer_list *t)
-#else
-void keep_alive_expiry(unsigned long data)
-#endif
 {
 	struct rpu_if_data *p;
 	struct img_priv *priv;
@@ -1599,11 +1596,7 @@ void keep_alive_expiry(unsigned long data)
 }
 #endif
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 void roc_timer_expiry(struct timer_list *t)
-#else
-void roc_timer_expiry(unsigned long data)
-#endif
 {
 	struct rpu_if_data *p;
 	struct img_priv *priv;
@@ -1633,11 +1626,7 @@ void roc_timer_expiry(unsigned long data)
 
 #ifdef HW_SCAN_TIMEOUT_ABORT
 extern void cancel_hw_scan(struct ieee80211_hw *hw, struct ieee80211_vif *vif);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 void scan_timer_expiry(struct timer_list *t)
-#else
-void scan_timer_expiry(unsigned long data)
-#endif
 {
 	struct rpu_if_data *p;
 	struct img_priv *priv;
@@ -1712,11 +1701,7 @@ int rpu_scan(int index,
 		 * only first PASSIVE_SCAN flag, remaining flags may be used
 		 * in future.
 		 */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 		if (req->chan_flags[i] & IEEE80211_CHAN_NO_IR) {
-#else
-		if (req->chan_flags[i] & IEEE80211_CHAN_PASSIVE_SCAN) {
-#endif
 			scan->chan_flags[i] = PASSIVE;
 		} else {
 			scan->chan_flags[i] = ACTIVE;
@@ -2936,8 +2921,8 @@ int rpu_msg_handler(void *nbuff)
 
 		if (dis->reason_code == REASON_NW_LOST) {
 			RPU_INFO_IF("connection lost\n");
-			if (!wake_lock_active(&hpriv->fw_err_lock))
-				wake_lock_timeout(&hpriv->fw_err_lock, msecs_to_jiffies(3*1000));
+			if (!(hpriv->fw_err_lock && hpriv->fw_err_lock->active))
+				__pm_wakeup_event(hpriv->fw_err_lock, 3000);
 			for (i = 0; i < MAX_VIFS; i++) {
 				if (!(priv->active_vifs & (1 << i)))
 					continue;
@@ -3124,11 +3109,7 @@ void rpu_if_free_outstnding(void)
 }
 
 #ifdef ENABLE_DAPT
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 void dapt_timer_expiry(struct timer_list *t)
-#else
-void dapt_timer_expiry(unsigned long data)
-#endif
 {
 	struct rpu_if_data *p;
 	struct img_priv *priv;

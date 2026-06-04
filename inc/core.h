@@ -23,7 +23,7 @@
 #include <linux/version.h>
 #include <linux/wireless.h>
 #include <linux/firmware.h>
-#include <linux/wakelock.h>
+#include <linux/pm_wakeup.h>
 
 #include <net/mac80211.h>
 
@@ -42,7 +42,6 @@ extern unsigned char img_suspend_status;
 extern unsigned char rx_interrupt_status;
 #endif
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 enum ieee80211_band {
         IEEE80211_BAND_2GHZ = NL80211_BAND_2GHZ,
         IEEE80211_BAND_5GHZ = NL80211_BAND_5GHZ,
@@ -51,7 +50,6 @@ enum ieee80211_band {
         /* keep last */
         IEEE80211_NUM_BANDS
 };
-#endif
 
 /* Wrapper to check return values for all
  * umac_if layer calls.
@@ -573,11 +571,7 @@ struct dapt_params {
 	int both_zero_count;
 };
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 extern void dapt_timer_expiry(struct timer_list *t);
-#else
-extern void dapt_timer_expiry(unsigned long data);
-#endif
 #endif
 
 struct vif_info_s {
@@ -599,7 +593,6 @@ struct img_priv {
 	unsigned char mc_filters[MCST_ADDR_LIMIT][6];
 	int mc_filter_count;
 	void *net_dev;
-	void *sdata;
 	int sniffer;
 
 	struct tasklet_struct proc_tx_tasklet;
@@ -777,7 +770,7 @@ extern void rpu_vif_set_edca_params(unsigned short queue,
 					    unsigned int vif_active);
 extern void rpu_vif_bss_info_changed(struct umac_vif *uvif,
 					     struct ieee80211_bss_conf
-					     *bss_conf, unsigned int changed);
+					     *bss_conf, u64 changed);
 extern int  rpu_tx_frame(struct sk_buff *skb,
 				 struct ieee80211_sta *sta,
 				 struct img_priv *priv,
@@ -1035,11 +1028,7 @@ static inline int ieee80211_is_unicast_robust_mgmt_frame(struct sk_buff *skb)
 
 	if (skb->len < 24 || is_multicast_ether_addr(hdr->addr1))
 		return 0;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 	return ieee80211_is_robust_mgmt_frame(skb);
-#else
-	return ieee80211_is_robust_mgmt_frame(hdr);
-#endif
 }
 static inline bool is_bufferable_mgmt_frame(struct ieee80211_hdr *hdr)
 {
@@ -1071,7 +1060,7 @@ int rpu_proc_tx(struct img_priv *priv, int descriptor_id, int queue);
 void rpu_unblock_all_frames(struct img_priv *priv,
 					    int ch_id);
 int load_rompatch(struct ieee80211_hw *hw);
-void stop(struct ieee80211_hw *hw);
+void stop(struct ieee80211_hw *hw, bool suspend);
 int start_prod_mode(struct img_priv *priv, unsigned int val);
 int stop_prod_mode(struct img_priv *priv, unsigned int val);
 int start_prod_rx_mode(struct img_priv *priv, unsigned int val,

@@ -21,7 +21,6 @@
 
 #include <net/cfg80211.h>
 #include <net/mac80211.h>
-#include <../net/mac80211/ieee80211_i.h>
 
 #include <linux/of.h>
 
@@ -134,10 +133,8 @@ int uccp_reinit;
 
 int load_fw(struct ieee80211_hw *hw);
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0))
 #undef IEEE80211_BAND_2GHZ
 #define IEEE80211_BAND_2GHZ NL80211_BAND_2GHZ
-#endif
 
 #define CHAN2G(_freq, _idx)  {		\
 	.band = IEEE80211_BAND_2GHZ,	\
@@ -485,11 +482,7 @@ static char bss_changed_info_tbl[BSS_CHANGED_INFO_NUM][32] = {
 	"BSS_CHANGED_PS",
 	"BSS_CHANGED_TXPOWER",
 	"BSS_CHANGED_P2P_PS",
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 	"BSS_CHANGED_BEACON_INFO",
-#else
-	"BSS_CHANGED_DTIM_PERIOD",
-#endif
 	"BSS_CHANGED_BANDWIDTH"
 };
 
@@ -569,8 +562,8 @@ void rk915_signal_io_error(int reason)
 		return;
 	hpriv->fw_error = 1;
 	if (!hpriv->fw_error_processing) {
-		if (!wake_lock_active(&hpriv->fw_err_lock))
-			wake_lock(&hpriv->fw_err_lock);
+		if (!(hpriv->fw_err_lock && hpriv->fw_err_lock->active))
+			__pm_stay_awake(hpriv->fw_err_lock);
 		
 		hpriv->fw_error_processing = 1;
 		hpriv->fw_error_counter++;
@@ -629,22 +622,12 @@ void trigger_wifi_scan_abort(int if_idx)
 }
 
 #ifdef ENABLE_KEEP_ALIVE
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 void keep_alive_expiry(struct timer_list *t)
-#else
-extern void keep_alive_expiry(unsigned long data);
-#endif
 static void init_keep_alive_timer (struct img_priv *priv)
 {
 	RPU_DEBUG_UMACIF("%s: %p\n", __func__, priv);
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 	timer_setup(&priv->keep_alive_timer, keep_alive_expiry, 0);
-#else
-	init_timer(&priv->keep_alive_timer);
-	priv->keep_alive_timer.data = (unsigned long)priv;
-	priv->keep_alive_timer.function = keep_alive_expiry;
-#endif
 	priv->null_frame_seq_no = 0;
 	priv->null_frame_sending = 0;
 	priv->null_frame_send_count = 0;
@@ -661,7 +644,7 @@ static void start_keep_alive_timer(struct img_priv *priv, int index)
 static void deinit_keep_alive_timer (struct img_priv *priv)
 {
 	RPU_DEBUG_UMACIF("%s: %p\n", __func__, priv);
-	del_timer(&priv->keep_alive_timer);
+	timer_delete(&priv->keep_alive_timer);
 }
 #endif
 
@@ -764,7 +747,7 @@ static void tx(struct ieee80211_hw *hw,
 tx_status:
 	tx_info->flags |= IEEE80211_TX_STAT_ACK;
 	tx_info->status.rates[0].count = 1;
-	ieee80211_tx_status(hw, skb);
+	ieee80211_tx_status_skb(hw, skb);
 }
 
 static int start(struct ieee80211_hw *hw)
@@ -806,7 +789,7 @@ out:
 	return ret;
 }
 
-void stop(struct ieee80211_hw *hw)
+void stop(struct ieee80211_hw *hw, bool suspend)
 {
 	struct img_priv    *priv= (struct img_priv *)hw->priv;
 
@@ -834,7 +817,6 @@ static int add_interface(struct ieee80211_hw *hw,
 	struct img_priv    *priv= hw->priv;
 	struct ieee80211_vif *v;
 	struct umac_vif   *uvif;
-	struct ieee80211_sub_if_data *sdata;
 	int vif_index, iftype;
 
 	/*if (priv->fw_error) {
@@ -847,12 +829,11 @@ static int add_interface(struct ieee80211_hw *hw,
 	v = vif;
 	vif->driver_flags |= IEEE80211_VIF_BEACON_FILTER;
 
-	sdata = vif_to_sdata(vif);
-	if (sdata) {
-		if (is_main_iface(vif->addr)) {
-			priv->net_dev = (void *)sdata->dev;
-			priv->sdata = (void *)sdata;
-		}
+	/* Use public API instead of mac80211 private ieee80211_i.h */
+	if (is_main_iface(vif->addr)) {
+		struct wireless_dev *wdev = ieee80211_vif_to_wdev(vif);
+		if (wdev && wdev->netdev)
+			priv->net_dev = (void *)wdev->netdev;
 	}
 
 	if (priv->current_vif_count == wifi->params.num_vifs) {
@@ -971,7 +952,7 @@ static int change_interface(struct ieee80211_hw *dev,
 	return ret;
 }
 
-static int config(struct ieee80211_hw *hw,
+static int config(struct ieee80211_hw *hw, int radio_idx,
 		unsigned int changed)
 {
 	struct img_priv *priv = hw->priv;
@@ -1247,9 +1228,9 @@ prog_rpu_fail:
 }
 
 
-static int conf_vif_tx(struct ieee80211_hw  *hw,
+static int conf_vif_tx(struct ieee80211_hw *hw,
 		       struct ieee80211_vif *vif,
-		       unsigned short queue,
+		       unsigned int link_id, u16 ac,
 		       const struct ieee80211_tx_queue_params *txq_params)
 {
 	struct img_priv *priv = hw->priv;
@@ -1294,7 +1275,7 @@ static int conf_vif_tx(struct ieee80211_hw  *hw,
 	params.cwmax = txq_params->cw_max;
 	params.uapsd = txq_params->uapsd;
 
-	rpu_vif_set_edca_params(queue,
+	rpu_vif_set_edca_params(ac,
 					(struct umac_vif *)&vif->drv_priv,
 					&params,
 					vif_active);
@@ -1565,11 +1546,7 @@ out:
 static void bss_info_changed(struct ieee80211_hw *hw,
 			     struct ieee80211_vif *vif,
 			     struct ieee80211_bss_conf *bss_conf,
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
-                             u32 changed)
-#else
-			     unsigned int changed)
-#endif
+                             u64 changed)
 {
 	struct img_priv   *priv= hw->priv;
 
@@ -1635,7 +1612,6 @@ static void setup_ht_cap(struct ieee80211_sta_ht_cap *ht_info)
 
 static void set_hw_flags(struct ieee80211_hw *hw)
 {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 	ieee80211_hw_set(hw, SIGNAL_DBM);
 	ieee80211_hw_set(hw, SUPPORTS_PS);
 	ieee80211_hw_set(hw, HOST_BROADCAST_PS_BUFFERING);
@@ -1644,33 +1620,14 @@ static void set_hw_flags(struct ieee80211_hw *hw)
 	ieee80211_hw_set(hw, REPORTS_TX_ACK_STATUS);
 	ieee80211_hw_set(hw, SUPPORTS_PER_STA_GTK);
 	ieee80211_hw_set(hw, CONNECTION_MONITOR);
-#else
-	hw->flags = IEEE80211_HW_SIGNAL_DBM;
-	hw->flags |= IEEE80211_HW_SUPPORTS_PS;
-	hw->flags |= IEEE80211_HW_HOST_BROADCAST_PS_BUFFERING;
-	hw->flags |= IEEE80211_HW_AMPDU_AGGREGATION;
-	hw->flags |= IEEE80211_HW_MFP_CAPABLE;
-	hw->flags |= IEEE80211_HW_REPORTS_TX_ACK_STATUS;
-	hw->flags |= IEEE80211_HW_SUPPORTS_PER_STA_GTK;
-	hw->flags |= IEEE80211_HW_CONNECTION_MONITOR;
-#endif
 	if (!wifi->params.disable_power_save &&
 	    !wifi->params.disable_sm_power_save) {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 		hw->wiphy->features |= NL80211_FEATURE_STATIC_SMPS |
 					NL80211_FEATURE_DYNAMIC_SMPS;
-#else
-		hw->flags |= IEEE80211_HW_SUPPORTS_STATIC_SMPS;
-		hw->flags |= IEEE80211_HW_SUPPORTS_DYNAMIC_SMPS;
-#endif
 	}
 #ifdef RPU_SLEEP_ENABLE
 #ifdef PS_SLEEP_TEST
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 	ieee80211_hw_set(hw, SUPPORTS_DYNAMIC_PS);
-#else
-	hw->flags |= IEEE80211_HW_SUPPORTS_DYNAMIC_PS;
-#endif
 #endif
 #endif
 }
@@ -1705,15 +1662,6 @@ static void init_hw(struct ieee80211_hw *hw)
 	hw->max_rates = 4;
 	hw->max_rate_tries = 5;
 	hw->queues = 4;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0))
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
-	/*
-	 * The value is a bit-shift of 1 second, 
-	 * so 5 is ~31ms (1000ms >> 5) of queued data
-	 */
-	/* tx_sk_pacing_shift is not available in kernel 4.4 */
-	/* hw->tx_sk_pacing_shift = 5; */
-#endif
 
 	//hw->max_rx_aggregation_subframes = 32;
 
@@ -1743,14 +1691,16 @@ static void init_hw(struct ieee80211_hw *hw)
 	hw->wiphy->flags |= WIPHY_FLAG_IBSS_RSN;
 	hw->wiphy->flags |= WIPHY_FLAG_HAS_REMAIN_ON_CHANNEL;
 #ifdef CONFIG_PM
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0))
 #ifdef WOWLAN_SUPPORT
 	hw->wiphy->wowlan = &uccp_wowlan_support;
 #else
-	hw->wiphy->wowlan = NULL;
-#endif
-#else
-        hw->wiphy->wowlan.flags = WIPHY_WOWLAN_ANY;
+	/* wowlan is a const pointer in modern kernels — use static struct */
+	{
+		static const struct wiphy_wowlan_support rk915_wowlan = {
+			.flags = WIPHY_WOWLAN_ANY,
+		};
+		hw->wiphy->wowlan = &rk915_wowlan;
+	}
 #endif
 #endif
 }
@@ -1758,21 +1708,13 @@ static void init_hw(struct ieee80211_hw *hw)
 
 static int ampdu_action(struct ieee80211_hw *hw,
 				struct ieee80211_vif *vif,
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 				struct ieee80211_ampdu_params *params)
-#else
-				enum ieee80211_ampdu_mlme_action action,
-				struct ieee80211_sta *sta,
-				u16 tid, u16 *ssn, u8 buf_size)
-#endif
 {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
         struct ieee80211_sta *sta = params->sta;
         enum ieee80211_ampdu_mlme_action action = params->action;
         u16 tid = params->tid;
         u16 *ssn = &params->ssn;
 	u8 buf_size = params->buf_size;
-#endif
 	int ret = 0;
 	unsigned int val = 0;
 	struct img_priv *priv = (struct img_priv *)hw->priv;
@@ -1841,7 +1783,7 @@ static int ampdu_action(struct ieee80211_hw *hw,
 }
 
 
-static int set_antenna(struct ieee80211_hw *hw, u32 tx_ant, u32 rx_ant)
+static int set_antenna(struct ieee80211_hw *hw, int radio_idx, u32 tx_ant, u32 rx_ant)
 {
 	struct img_priv *priv = (struct img_priv *)hw->priv;
 
@@ -1869,22 +1811,12 @@ static int tx_last_beacon(struct ieee80211_hw *hw)
 }
 
 #ifdef HW_SCAN_TIMEOUT_ABORT
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 extern void scan_timer_expiry(struct timer_list *t);
-#else
-extern void scan_timer_expiry(unsigned long data);
-#endif
 static void init_scan_timeout_timer (struct img_priv *priv)
 {
 	RPU_DEBUG_UMACIF("%s: %p\n", __func__, priv);
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 	timer_setup(&priv->scan_timer, scan_timer_expiry, 0);
-#else
-	init_timer(&priv->scan_timer);
-	priv->scan_timer.data = (unsigned long)NULL;
-	priv->scan_timer.function = scan_timer_expiry;
-#endif
 	priv->in_scan_timeout = 0;
 }
 
@@ -1902,7 +1834,7 @@ static void start_scan_timeout_timer(struct img_priv *priv, int p2p)
 static void deinit_scan_timeout_timer (struct img_priv *priv)
 {
 	RPU_DEBUG_UMACIF("%s: %p\n", __func__, priv);
-	del_timer(&priv->scan_timer);
+	timer_delete(&priv->scan_timer);
 }
 #endif
 
@@ -1943,18 +1875,12 @@ static int split_mult_ssid_scan(struct img_priv *priv, int do_scan, int vif_inde
 
 int scan(struct ieee80211_hw *hw,
 	 struct ieee80211_vif *vif,
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 	 struct ieee80211_scan_request *hw_req)
-#else
-	 struct cfg80211_scan_request *req)
-#endif
 {
 	struct umac_vif *uvif = (struct umac_vif *)vif->drv_priv;
 	struct scan_req scan_req = {0};
 	int i = 0;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 	struct cfg80211_scan_request *req = &hw_req->req;
-#endif
 
 	/*if (uvif->priv->fw_error) {
 		return -EBUSY;
@@ -1977,7 +1903,7 @@ int scan(struct ieee80211_hw *hw,
 
 #ifdef RK3036_DONGLE
 	if (req->n_channels == 3 && req->no_cck) {
-		ieee80211_scan_completed(uvif->priv->hw, false);
+		{ struct cfg80211_scan_info info = { .aborted = false }; ieee80211_scan_completed(uvif->priv->hw, &info); }
 		return 0;
 	}
 #endif
@@ -1990,14 +1916,10 @@ int scan(struct ieee80211_hw *hw,
 		 * and some data traffic
 		 */
 		if (wifi->params.hw_scan_status != HW_SCAN_STATUS_NONE) {
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 			struct cfg80211_scan_info info = {
 				.aborted = false,
  			};
 			ieee80211_scan_completed(uvif->priv->hw, &info);
-#else
-			ieee80211_scan_completed(uvif->priv->hw, false);
-#endif
 			wifi->params.hw_scan_status = HW_SCAN_STATUS_NONE;
 		}
 
@@ -2088,22 +2010,16 @@ void rpu_scan_complete(void *context,
 	 */
 	spin_lock_bh(&priv->scan_cancel_lock);
 	if (wifi->params.hw_scan_status != HW_SCAN_STATUS_NONE) {
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 		struct cfg80211_scan_info info = {
 			.aborted = false,
 		};
-#endif
 
 		/* Keep track of HW Scan requests and compeltes */
 		wifi->params.hw_scan_status = HW_SCAN_STATUS_NONE;
 		spin_unlock_bh(&priv->scan_cancel_lock);
 
 		priv->stats->umac_scan_complete++;
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 		ieee80211_scan_completed(priv->hw, &info);
-#else
-		ieee80211_scan_completed(priv->hw, false);
-#endif
 
 #ifdef ENABLE_DAPT
 		dapt_scan_complete(priv);
@@ -2144,11 +2060,9 @@ void cancel_hw_scan(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 
 	spin_lock_bh(&priv->scan_cancel_lock);
 	if (wifi->params.hw_scan_status == HW_SCAN_STATUS_PROGRESS) {
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 		struct cfg80211_scan_info info = {
  			.aborted = true,
 		};
-#endif
 		wifi->params.hw_scan_status = HW_SCAN_STATUS_NONE;
 		spin_unlock_bh(&priv->scan_cancel_lock);
 
@@ -2165,11 +2079,7 @@ void cancel_hw_scan(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 			//As wait for scan abort should always return 0
 			wait_for_scan_abort(priv);
 		}
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 		ieee80211_scan_completed(hw, &info);
-#else
-		ieee80211_scan_completed(hw, true);
-#endif
 		priv->stats->umac_scan_complete++;
 
 #ifdef ENABLE_DAPT
@@ -2191,7 +2101,7 @@ void cancel_hw_scan(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 }
 
 
-int set_rts_threshold(struct ieee80211_hw *hw,
+int set_rts_threshold(struct ieee80211_hw *hw, int radio_idx,
 		      u32 value)
 {
 	struct img_priv *priv = NULL;
@@ -2245,6 +2155,7 @@ int load_fw(struct ieee80211_hw *hw)
 
 static struct ieee80211_ops ops = {
 	.tx                 = tx,
+	.wake_tx_queue       = ieee80211_handle_wake_tx_queue,
 	.start              = start,
 	.stop               = stop,
 	.add_interface      = add_interface,
@@ -2274,6 +2185,9 @@ static struct ieee80211_ops ops = {
 	.cancel_hw_scan	    = cancel_hw_scan,
 	.set_rekey_data     = NULL,
 	.set_rts_threshold  = set_rts_threshold,
+	.add_chanctx        = ieee80211_emulate_add_chanctx,
+	.remove_chanctx     = ieee80211_emulate_remove_chanctx,
+	.change_chanctx     = ieee80211_emulate_change_chanctx,
 };
 
 static int parse_mac_addr_string(const char *str, unsigned char *addr)
@@ -2491,6 +2405,7 @@ int rpu_init(void)
 
 	if (!error) {
 		wifi->hw = hw;
+		RPU_INFO_UMACIF("ieee80211_register_hw succeeded\n");
 		//rpu_if_init(priv, priv->name);
 		goto out;
 	} else {

@@ -31,7 +31,7 @@ void modify_beacon_params (struct umac_vif *uvif,
 			  uvif->vif->addr,
 			  bcn_int);
 	} else {
-		del_timer(&uvif->bcn_timer);
+		timer_delete(&uvif->bcn_timer);
 	}
 prog_rpu_fail:
 	return;
@@ -39,15 +39,9 @@ prog_rpu_fail:
 }
 
 //INIT_GET_SPEND_TIME(bcn_start_time, bcn_stop_time);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 static void vif_bcn_timer_expiry(struct timer_list *t)
 {
-	struct umac_vif *uvif = from_timer(uvif, t, bcn_timer);
-#else
-static void vif_bcn_timer_expiry(unsigned long data)
-{
-	struct umac_vif *uvif = (struct umac_vif *)data;
-#endif
+	struct umac_vif *uvif = container_of(t, struct umac_vif, bcn_timer);
 	struct sk_buff *skb, *temp;
 	struct sk_buff_head bcast_frames;
 
@@ -65,7 +59,7 @@ static void vif_bcn_timer_expiry(unsigned long data)
 		return;
 
 	if (uvif->vif->type == NL80211_IFTYPE_AP) {
-		temp = skb = ieee80211_beacon_get(uvif->priv->hw, uvif->vif);
+		temp = skb = ieee80211_beacon_get(uvif->priv->hw, uvif->vif, 0);
 
 		if (!skb) {
 			/* No beacon, so dont transmit braodcast frames*/
@@ -111,7 +105,7 @@ static void vif_bcn_timer_expiry(unsigned long data)
 		spin_unlock_bh(&uvif->priv->bcast_lock);
 
 	} else {
-		skb = ieee80211_beacon_get(uvif->priv->hw, uvif->vif);
+		skb = ieee80211_beacon_get(uvif->priv->hw, uvif->vif, 0);
 
 		if (!skb)
 			goto reschedule_timer;
@@ -135,17 +129,11 @@ reschedule_timer:
 
 void init_beacon (struct umac_vif *uvif)
 {
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 	timer_setup(&uvif->bcn_timer, vif_bcn_timer_expiry, 0);
-#else
-	init_timer(&uvif->bcn_timer);
-	uvif->bcn_timer.data = (unsigned long)uvif;
-	uvif->bcn_timer.function = vif_bcn_timer_expiry;
-#endif
 }
 
 void deinit_beacon (struct umac_vif *uvif)
 {
-	del_timer(&uvif->bcn_timer);
+	timer_delete(&uvif->bcn_timer);
 
 }

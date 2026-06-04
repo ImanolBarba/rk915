@@ -5,7 +5,7 @@
 #include "sdio.h"
 #include "hal_io.h"
 
-#define FW_READ_BACK_CHECK
+//#define FW_READ_BACK_CHECK
 
 struct io_cmd {
         unsigned int id;
@@ -178,9 +178,7 @@ static int rk915_read_firmware_file(struct firmware_info *fw_info, char *name, u
 	char path[64];
 	struct file *file;
 	int read, size = 1024;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
 	loff_t pos = 0;
-#endif
 
 	for (i = 0; i < ARRAY_SIZE(fw_path); i++) {
 		if (!fw_path[i][0])
@@ -203,12 +201,7 @@ static int rk915_read_firmware_file(struct firmware_info *fw_info, char *name, u
 
 	*len = 0;
 	while (1) {
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 14, 0))
 		read = kernel_read(file, buf, size, &pos);
-#else
-		read = kernel_read(file, file->f_pos, buf, size);
-		file->f_pos += read;
-#endif
 		if (read <= 0)
 			break;
 
@@ -658,8 +651,8 @@ static int rk915_download(struct hal_priv *priv)
 		if (count++ > max_retry)
 			break;
 		mdelay(delay_ms);
-		//if (net_ratelimit())
-		//	RPU_INFO_FIRMWARE("wait fw ready (state = %d)\n", state);
+		if (net_ratelimit())
+			RPU_INFO_FIRMWARE("wait fw ready (state = %d)\n", state);
 	};
 	if (count > max_retry) {
 		RPU_INFO_FIRMWARE("%s: download firmware failed\n", __func__);

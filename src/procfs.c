@@ -25,10 +25,8 @@ MODULE_PARM_DESC(default_phy_threshold, "default phy threshold");
 
 struct wifi_dev *wifi;
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0))
 #undef IEEE80211_BAND_2GHZ
 #define IEEE80211_BAND_2GHZ NL80211_BAND_2GHZ
-#endif
 
 #ifdef RPU_SLEEP_ENABLE
 #include "sdio.h"
@@ -50,7 +48,6 @@ static int proc_open_sleep_stats(struct inode *inode, struct file *file)
 	return single_open(file, proc_read_sleep_stats, NULL);
 }
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0))
 static const struct proc_ops params_fops_sleep_stats = {
     .proc_open = proc_open_sleep_stats,
     .proc_read = seq_read,
@@ -58,15 +55,6 @@ static const struct proc_ops params_fops_sleep_stats = {
     .proc_write = NULL,
     .proc_release = single_release
 };
-#else
-static const struct file_operations params_fops_sleep_stats = {
-	.open = proc_open_sleep_stats,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.write = NULL,
-	.release = single_release
-};
-#endif
 #endif
 
 static int proc_read_config(struct seq_file *m, void *v)
@@ -990,10 +978,8 @@ static void dump_bytes(struct seq_file *s, struct fw_info_dump *info, int word)
 #define RF_CAL_DATA_DIR		"/data"
 static void save_rf_cal_data(struct fw_info_dump *info)
 {
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 	struct file *fp;
 	loff_t pos;
-    mm_segment_t fs;
 	u8 path[64];
 
 	sprintf(path, "%s/%s", RF_CAL_DATA_DIR, RF_CAL_DATA_FILE);
@@ -1003,13 +989,13 @@ static void save_rf_cal_data(struct fw_info_dump *info)
 		return;
 	}
 
-	fs = get_fs();
-	set_fs(KERNEL_DS);
 	pos = 0;
-	vfs_write(fp, info->info, info->offset, &pos);
+	/* kernel_write replaces get_fs()/set_fs(KERNEL_DS) + vfs_write,
+	 * which were removed in kernel 5.18.
+	 */
+	kernel_write(fp, info->info, info->offset, &pos);
 
 	filp_close(fp, NULL);
-#endif
 }
 
 static int fw_info_seq_show(struct seq_file *s, void *v)
@@ -1766,7 +1752,6 @@ static int proc_open_fw_params(struct inode *inode, struct file *file)
 	return single_open(file, proc_read_fw_params, NULL);
 }
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0))
 static const struct proc_ops params_fops_config = {
 	.proc_open = proc_open_config,
 	.proc_read = seq_read,
@@ -1774,16 +1759,6 @@ static const struct proc_ops params_fops_config = {
 	.proc_write = proc_write_config,
 	.proc_release = single_release
 };
-#else
-static const struct file_operations params_fops_config = {
-	.open = proc_open_config,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.write = proc_write_config,
-	.release = single_release
-};
-#endif
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0))
 static const struct proc_ops params_fops_phy_stats = {
     .proc_open = proc_open_phy_stats,
     .proc_read = seq_read,
@@ -1791,16 +1766,6 @@ static const struct proc_ops params_fops_phy_stats = {
     .proc_write = NULL,
     .proc_release = single_release
 };
-#else
-static const struct file_operations params_fops_phy_stats = {
-	.open = proc_open_phy_stats,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.write = NULL,
-	.release = single_release
-};
-#endif
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0))
 static const struct proc_ops params_fops_mac_stats = {
     .proc_open = proc_open_mac_stats,
     .proc_read = seq_read,
@@ -1808,16 +1773,6 @@ static const struct proc_ops params_fops_mac_stats = {
     .proc_write = NULL,
     .proc_release = single_release
 };
-#else
-static const struct file_operations params_fops_mac_stats = {
-	.open = proc_open_mac_stats,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.write = NULL,
-	.release = single_release
-};
-#endif
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0))
 static const struct proc_ops params_fops_fw_info = {
     .proc_open = proc_open_fw_info,
     .proc_read = seq_read,
@@ -1825,16 +1780,6 @@ static const struct proc_ops params_fops_fw_info = {
     .proc_write = NULL,
     .proc_release = seq_release
 };
-#else
-static const struct file_operations params_fops_fw_info = {
-	.open = proc_open_fw_info,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.write = NULL,
-	.release = seq_release
-};
-#endif
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0))
 static const struct proc_ops params_fops_fw_log = {
     .proc_open = proc_open_fw_log,
     .proc_read = seq_read,
@@ -1842,16 +1787,6 @@ static const struct proc_ops params_fops_fw_log = {
     .proc_write = NULL,
     .proc_release = seq_release
 };
-#else
-static const struct file_operations params_fops_fw_log = {
-	.open = proc_open_fw_log,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.write = NULL,
-	.release = seq_release
-};
-#endif
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0))
 static const struct proc_ops params_fops_fw_params = {
     .proc_open = proc_open_fw_params,
     .proc_read = seq_read,
@@ -1859,15 +1794,6 @@ static const struct proc_ops params_fops_fw_params = {
     .proc_write = proc_write_fw_params,
     .proc_release = single_release
 };
-#else
-static const struct file_operations params_fops_fw_params = {
-	.open = proc_open_fw_params,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.write = proc_write_fw_params,
-	.release = single_release
-};
-#endif
 
 static void set_default_phy_thresh(unsigned char *rf_params, int len)
 {
@@ -1919,6 +1845,9 @@ int proc_init(struct proc_dir_entry ***main_dir_entry)
 		err = -ENOMEM;
 		goto out;
 	}
+
+	/* Defensive: remove stale proc entries from any previous failed load */
+	remove_proc_subtree("rk915", init_net.proc_net);
 
 	wifi->umac_proc_dir_entry = proc_mkdir("rk915", init_net.proc_net);
 	if (!wifi->umac_proc_dir_entry) {

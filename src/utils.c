@@ -53,7 +53,7 @@ int wait_for_scan_abort(struct img_priv *priv)
 
 check_scan_abort_complete:
 	if (!hpriv->fw_error && !priv->scan_abort_done && (count < SCAN_ABORT_TIMEOUT_TICKS)) {
-		current->state = TASK_INTERRUPTIBLE;
+		__set_current_state(TASK_INTERRUPTIBLE);
 
 		if (schedule_timeout(1) == 0)
 			count++;
@@ -84,7 +84,7 @@ int wait_for_scan_complete(struct img_priv *priv)
 check_scan_complete:
         if (!hpriv->fw_error && wifi->params.hw_scan_status != HW_SCAN_STATUS_NONE &&
 		(count < msecs_to_jiffies(5000))) {
-                current->state = TASK_INTERRUPTIBLE;
+                __set_current_state(TASK_INTERRUPTIBLE);
 
                 if (schedule_timeout(1) == 0)
                         count++;
@@ -112,7 +112,7 @@ int wait_for_cancel_hw_roc(struct img_priv *priv)
 
 check_cancel_hw_roc_complete:
 	if (!hpriv->fw_error && !priv->cancel_hw_roc_done && (count < CANCEL_HW_ROC_TIMEOUT_TICKS)) {
-		current->state = TASK_INTERRUPTIBLE;
+		__set_current_state(TASK_INTERRUPTIBLE);
 		if (schedule_timeout(1) == 0)
 			count++;
 		goto check_cancel_hw_roc_complete;
@@ -146,7 +146,7 @@ int wait_for_channel_prog_complete(struct img_priv *priv)
 
 check_ch_prog_complete:
 	if (!hpriv->fw_error && !priv->chan_prog_done && (count < CH_PROG_TIMEOUT_TICKS)) {
-		current->state = TASK_INTERRUPTIBLE;
+		__set_current_state(TASK_INTERRUPTIBLE);
 
 		if (schedule_timeout(1) == 0)
 			count++;
@@ -182,7 +182,7 @@ int wait_for_reset_complete(struct img_priv *priv, int enable)
 
 check_reset_complete:
 	if (/*!hpriv->fw_error &&*/ !priv->reset_complete && (count < timeout)) {
-		current->state = TASK_INTERRUPTIBLE;
+		__set_current_state(TASK_INTERRUPTIBLE);
 
 		if (schedule_timeout(1) == 0)
 			count++;
@@ -212,7 +212,7 @@ int wait_for_read_csr_cmp(struct img_priv *priv)
 
 check_read_csr_complete:
 	if (!hpriv->fw_error && !priv->read_csr_complete && (count < msecs_to_jiffies(1000))) {
-		current->state = TASK_INTERRUPTIBLE;
+		__set_current_state(TASK_INTERRUPTIBLE);
 
 		if (schedule_timeout(1) == 0)
 			count++;
@@ -243,7 +243,7 @@ int wait_for_hp_ready_blocking_sleep(void)
 
 check_rpu_ready:
 	if (!waiting_for_rpu_ready && (count < RPU_READY_TIMEOUT_TICKS)) {
-		current->state = TASK_INTERRUPTIBLE;
+		__set_current_state(TASK_INTERRUPTIBLE);
 
 		if (0 == schedule_timeout(1))
 			count++;
@@ -303,7 +303,7 @@ int wait_for_fw_error_process_complete(struct img_priv *priv)
 
 fw_error_processing_complete:
 	if (hpriv->fw_error_processing && (count < FW_ERR_PROCESS_TIMEOUT_TICKS)) {
-		current->state = TASK_INTERRUPTIBLE;
+		__set_current_state(TASK_INTERRUPTIBLE);
 
 		if (schedule_timeout(1) == 0)
 			count++;
@@ -332,7 +332,7 @@ int wait_for_fw_error_cmd_done(struct img_priv *priv)
 
 fw_error_cmd_done:
 	if (!hpriv->fw_error_cmd_done && (count < msecs_to_jiffies(1000))) {
-		current->state = TASK_INTERRUPTIBLE;
+		__set_current_state(TASK_INTERRUPTIBLE);
 
 		if (schedule_timeout(1) == 0)
 			count++;
@@ -361,7 +361,7 @@ int wait_for_pm_resume_done(struct img_priv *priv)
 
 pm_resume_done:
 	if (hpriv->during_pm_resume && (count < msecs_to_jiffies(1000))) {
-		current->state = TASK_INTERRUPTIBLE;
+		__set_current_state(TASK_INTERRUPTIBLE);
 
 		if (schedule_timeout(1) == 0)
 			count++;
@@ -390,7 +390,7 @@ int wait_for_rxq_empty(struct img_priv *priv)
 
 rxq_empty:
 	if (skb_queue_len(&hpriv->rxq) > 0 && (count < RXQ_EMPTY_TIMEOUT_TICKS)) {
-		current->state = TASK_INTERRUPTIBLE;
+		__set_current_state(TASK_INTERRUPTIBLE);
 
 		if (schedule_timeout(1) == 0)
 			count++;

@@ -14,23 +14,13 @@
 #include "p2p.h"
 #include "utils.h"
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 extern void roc_timer_expiry(struct timer_list *t);
-#else
-extern void roc_timer_expiry(unsigned long data);
-#endif
 
 void init_roc_timeout_timer (struct img_priv *priv)
 {
 	RPU_DEBUG_ROC("%s: %p\n", __func__, priv);
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 	timer_setup(&priv->roc_timer, roc_timer_expiry, 0);
-#else
-	init_timer(&priv->roc_timer);
-	priv->roc_timer.data = (unsigned long)NULL;
-	priv->roc_timer.function = roc_timer_expiry;
-#endif
 }
 
 void start_roc_timeout_timer(struct img_priv *priv, int timeout)
@@ -42,7 +32,7 @@ void start_roc_timeout_timer(struct img_priv *priv, int timeout)
 void deinit_roc_timeout_timer (struct img_priv *priv)
 {
 	RPU_DEBUG_ROC("%s: %p\n", __func__, priv);
-	del_timer(&priv->roc_timer);
+	timer_delete(&priv->roc_timer);
 }
 
 void rpu_roc_complete_work(struct work_struct *work)
@@ -149,12 +139,8 @@ prog_rpu_fail:
 	return ret;
 }
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0))
 int cancel_remain_on_channel(struct ieee80211_hw *hw,
 						struct ieee80211_vif *vif)
-#else
-int cancel_remain_on_channel(struct ieee80211_hw *hw)
-#endif
 {
 	struct img_priv *priv = (struct img_priv *)hw->priv;
 	int ret = 0;

@@ -1,14 +1,16 @@
 #
-# Rockchip RK915 Wireless drivers
+# Rockchip RK915 WiFi driver (ported to mainline)
 #
 
 config RK915
-	tristate "Rockchip RK915 Wireless drivers"
-	select WIRELESS_EXT
-	select WEXT_PRIV
-	select CFG80211
-	select MAC80211
-	select NL80211_TESTMODE
-
+	tristate "Rockchip RK915 WiFi driver"
+	depends on MMC && CFG80211 && MAC80211
+	default m
 	help
-		Rockchip RK915 Wireless drivers
+	  Rockchip RK915 WiFi driver, ported from BSP kernel 4.4 to
+	  mainline 6.x. Communicates over SDIO and requires firmware
+	  files rk915_fw.bin and rk915_patch.bin in /lib/firmware/.
+	  
+	  Power sequencing is handled by DT mmc-pwrseq-simple.
+	  
+	  To compile as a module, choose M here.

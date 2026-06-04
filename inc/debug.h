@@ -436,27 +436,27 @@ enum rpu_debug_level {
 	((x==0) ? "p2p0":"wlan0")
 
 #define START_PROFILE_LOCAL								\
-	struct timeval start_time, end_time;				\
-	do_gettimeofday(&start_time);
+	struct timespec64 start_time, end_time;				\
+	ktime_get_real_ts64(&start_time);
 
 #define END_PROFILE_LOCAL								\
-	do_gettimeofday(&end_time);							\
-	pr_info("%s: use %ld (us)\n", __func__, 				\
-		((end_time.tv_sec & 0xFFF) * 1000000 + end_time.tv_usec) -	\
-		((start_time.tv_sec & 0xFFF) * 1000000 + start_time.tv_usec));
+	ktime_get_real_ts64(&end_time);							\
+	pr_info("%s: use %lld (us)\n", __func__, 				\
+		((end_time.tv_sec & 0xFFF) * 1000000LL + end_time.tv_nsec / 1000) -	\
+		((start_time.tv_sec & 0xFFF) * 1000000LL + start_time.tv_nsec / 1000));
 
 #define INIT_GET_SPEND_TIME(start_time, end_time)		\
-	struct timeval start_time, end_time;
+	struct timespec64 start_time, end_time;
 
 #define START_GET_SPEND_TIME(start_time, end_time)		\
-	do_gettimeofday(&start_time);
+	ktime_get_real_ts64(&start_time);
 
 #define END_GET_SPEND_TIME(start_time, end_time)		\
-	do_gettimeofday(&end_time);
+	ktime_get_real_ts64(&end_time);
 
 #define GET_SPEND_TIME_US(start_time, end_time)			\
-	(((end_time.tv_sec & 0xFFF) * 1000000 + end_time.tv_usec) -	\
-	((start_time.tv_sec & 0xFFF) * 1000000 + start_time.tv_usec))
+	(((end_time.tv_sec & 0xFFF) * 1000000LL + end_time.tv_nsec / 1000) -	\
+	((start_time.tv_sec & 0xFFF) * 1000000LL + start_time.tv_nsec / 1000))
 
 void convert_cmd_to_str(int id, char *str);
 void convert_event_to_str(int id, char *str);

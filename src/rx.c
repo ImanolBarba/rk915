@@ -63,7 +63,7 @@ void dapt_stop_timer(struct img_priv *priv)
 	RPU_DEBUG_DAPT("%s\n", __func__);
 
 	if (!dapt->dapt_disable) {
-		del_timer_sync(&dapt->dapt_timer);
+		timer_delete_sync(&dapt->dapt_timer);
 		dapt->timer_start = 0;
 	}
 }
@@ -89,13 +89,7 @@ void dapt_param_init(struct img_priv *priv)
 
 	priv->sniffer = 0;
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 	timer_setup(&dapt->dapt_timer, dapt_timer_expiry, 0);
-#else
-	init_timer(&dapt->dapt_timer);
-	dapt->dapt_timer.data = (unsigned long)priv;
-	dapt->dapt_timer.function = dapt_timer_expiry;
-#endif
 
 	dapt_start_timer(priv, DAPT_CALC_INTERVAL);
 }
@@ -662,27 +656,10 @@ void dapt_beacon(struct img_priv *priv, s8 rssi, int index)
 
 static u64 get_systime_us(void)
 {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 39))
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
 	struct timespec64 ts;
-#else
-	struct timespec ts;
-#endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
 	ts = ktime_to_timespec64(ktime_get_boottime());
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
-	ts = ktime_to_timespec(ktime_get_boottime());
-#else
-	get_monotonic_boottime(&ts);
-#endif
 	return ((u64)ts.tv_sec * 1000000) + ts.tv_nsec / 1000;
-#else
-	struct timeval tv;
-
-	do_gettimeofday(&tv);
-	return ((u64)tv.tv_sec * 1000000) + tv.tv_usec;
-#endif
 }
 
 void rpu_add_scan_resp_timestamp(struct ieee80211_hdr *hdr)
@@ -746,11 +723,7 @@ void rpu_rx_frame(struct sk_buff *skb, void *context)
 	memset(&rx_status, 0, sizeof(struct ieee80211_rx_status));
 
 	/* Remove this once hardware supports bip(11w) is available*/
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 	if (!ieee80211_is_robust_mgmt_frame(skb))
-#else
-	if (!ieee80211_is_robust_mgmt_frame(hdr))
-#endif
 		rx_status.flag |= RX_FLAG_DECRYPTED;
 
 	rx_status.flag |= RX_FLAG_MMIC_STRIPPED;
@@ -820,11 +793,7 @@ void rpu_rx_frame(struct sk_buff *skb, void *context)
 			rx_status.rate_idx = (rx_control_info.rate_or_mcs & 0x7f);
 		}
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 		rx_status.encoding = RX_ENC_HT;
-#else
-		rx_status.flag |= RX_FLAG_HT;
-#endif
 	} else {
 		band = priv->hw->wiphy->bands[rx_status.band];
 

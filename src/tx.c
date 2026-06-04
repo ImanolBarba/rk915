@@ -164,7 +164,7 @@ static void wait_for_tx_complete(struct tx_config *tx)
 		count++;
 
 		if (count < TX_COMPLETE_TIMEOUT_TICKS) {
-			current->state = TASK_INTERRUPTIBLE;
+			__set_current_state(TASK_INTERRUPTIBLE);
 			schedule_timeout(1);
 		} else {
 			RPU_DEBUG_TX("%s-UMACTX:WARNING: ", priv->name);
@@ -396,7 +396,7 @@ static void tx_status(struct sk_buff *skb,
 
 	priv->stats->tx_dones_to_stack++;
 
-	ieee80211_tx_status(priv->hw, skb);
+	ieee80211_tx_status_skb(priv->hw, skb);
 prog_rpu_fail:
 	return;
 }
@@ -1065,9 +1065,9 @@ int __rpu_tx_frame(struct img_priv *priv,
 
 static void rpu_tx_wake_lock(void)
 {
-	if (wake_lock_active(&hpriv->fw_err_lock))
-		wake_unlock(&hpriv->fw_err_lock);
-	wake_lock_timeout(&hpriv->fw_err_lock, msecs_to_jiffies(3*1000));
+	if (hpriv->fw_err_lock && hpriv->fw_err_lock->active)
+		__pm_relax(hpriv->fw_err_lock);
+	__pm_wakeup_event(hpriv->fw_err_lock, 3000);
 }
 
 int rpu_tx_frame(struct sk_buff *skb,

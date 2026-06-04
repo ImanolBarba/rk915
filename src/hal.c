@@ -7,7 +7,7 @@
  * (at your option) any later version.
  */
 
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 #include <linux/clk.h>
 #include <linux/etherdevice.h>
@@ -30,6 +30,15 @@
 #include <linux/suspend.h>
 
 
+/* NUM_DEFAULT_KEYS/NUM_DEFAULT_MGMT_KEYS moved from <net/mac80211.h> to
+ * net/mac80211/key.h (kernel-internal) around 6.x. Define locally. */
+#ifndef NUM_DEFAULT_KEYS
+#define NUM_DEFAULT_KEYS 4
+#endif
+#ifndef NUM_DEFAULT_MGMT_KEYS
+#define NUM_DEFAULT_MGMT_KEYS 2
+#endif
+
 #include "core.h"
 #include "hal.h"
 #include "hal_common.h"
@@ -39,9 +48,7 @@
 #include "if_io.h"
 #include "platform.h"
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 #include <uapi/linux/sched/types.h>
-#endif
 
 #define ENABLE_RX_WORKQ		1
 /* TODO: Remove this once we get proper register address for
@@ -169,7 +176,6 @@ void hal_send_direct(void *msg)
 static struct scatterlist sg_list[12];
 #endif
 
-#include <../net/mac80211/ieee80211_i.h>
 
 #define CMD_RESET_BIT           (1<<0)
 #define CMD_TX_POWER_BIT        (1<<1)
@@ -736,8 +742,8 @@ static void fw_err_work_fn(struct work_struct *work)
 	RPU_ERROR_ROCOVERY("-------- fw error recovery end --------\n");
 
 unlock_out:
-	if (wake_lock_active(&hpriv->fw_err_lock))
-		wake_unlock(&hpriv->fw_err_lock);
+	if (hpriv->fw_err_lock && hpriv->fw_err_lock->active)
+		__pm_relax(hpriv->fw_err_lock);
 }
 
 //static void tx_tasklet_fn(unsigned long data)
@@ -750,7 +756,7 @@ static void tx_work_fn(struct work_struct *work)
 #ifdef TX_USE_THREAD
 	tsk_ctl_t *tsk = (tsk_ctl_t *)data;
 	struct hal_priv *priv = (struct hal_priv *)tsk->parent;
-	static struct sched_param param = { .sched_priority = 1 };
+	
 #else
 	struct hal_priv *priv = container_of(work, struct hal_priv, tx_work);
 #endif
@@ -775,7 +781,7 @@ static void tx_work_fn(struct work_struct *work)
 #endif
 
 #ifdef TX_USE_THREAD
-	sched_setscheduler(current, SCHED_FIFO, &param);
+	sched_set_fifo(current);
 	//complete(&tsk->completed);
 #endif
 
@@ -971,7 +977,7 @@ static void tx_work_fn(struct work_struct *work)
 #ifdef TX_USE_THREAD        
     }
 
-	complete_and_exit(&tsk->completed, 0);
+	kthread_complete_and_exit(&tsk->completed, 0);
 	RPU_INFO_HAL("%s exit\n", __func__);    
 #endif
 }
@@ -1153,7 +1159,7 @@ static int rx_thread(void *data)
 	unsigned int payload_length, length;
 	unsigned int event;
 	unsigned int rx_counts_one = 0;
-	static struct sched_param param = { .sched_priority = 1 };
+	
 #ifdef DUMP_MORE_DEBUG_INFO
 	char evt_str[64];
 #endif
@@ -1163,7 +1169,7 @@ static int rx_thread(void *data)
 	memset(hal_event_rx_counts_one_interrupts, 0, 8*sizeof(unsigned int));
 	memset(hal_event_rx_counts_one_packet, 0, 8*sizeof(unsigned int));
 
-	sched_setscheduler(current, SCHED_FIFO, &param);
+	sched_set_fifo(current);
 	//complete(&tsk->completed);
 	while (1) {
 		if (priv->io_info->rx_serias_count == 0 &&
@@ -1285,7 +1291,7 @@ static int rx_thread(void *data)
 		priv->rcv_handler(rx_skb);
 #endif
 	}
-	complete_and_exit(&tsk->completed, 0);
+	kthread_complete_and_exit(&tsk->completed, 0);
 	RPU_INFO_HAL("%s exit\n", __func__);
 }
 
@@ -1409,7 +1415,6 @@ static int proc_open_hal_stats(struct inode *inode, struct file *file)
 	return single_open(file, proc_read_hal_stats, NULL);
 }
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0))  
 static const struct proc_ops params_fops_hal_stats = {
     .proc_open = proc_open_hal_stats,
     .proc_read = seq_read,
@@ -1417,15 +1422,6 @@ static const struct proc_ops params_fops_hal_stats = {
     .proc_write = proc_write_hal_stats,
     .proc_release = single_release
 };
-#else
-static const struct file_operations params_fops_hal_stats = {
-	.open = proc_open_hal_stats,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.write = proc_write_hal_stats,
-	.release = single_release
-};
-#endif
 
 static int hal_proc_init(struct proc_dir_entry *hal_proc_dir_entry)
 {
@@ -1549,7 +1545,7 @@ static int hal_deinit(void *dev)
 
 	cancel_work_sync(&hpriv->fw_err_work);
 
-	wake_lock_destroy(&hpriv->fw_err_lock);
+	wakeup_source_unregister(hpriv->fw_err_lock);
 
 #ifdef TX_USE_THREAD
 	PROC_STOP(&hpriv->thr_tx_ctl);
@@ -1611,7 +1607,7 @@ static int hal_init(void *dev)
 
 	INIT_WORK(&hpriv->fw_err_work, fw_err_work_fn);
 
-	wake_lock_init(&hpriv->fw_err_lock, WAKE_LOCK_SUSPEND, "rk915_lock");
+	hpriv->fw_err_lock = wakeup_source_register(hpriv->io_info->dev, "rk915_lock");
 
 	hpriv->pm_notifier.notifier_call = rk915_pm_notifier;
 	register_pm_notifier(&hpriv->pm_notifier);

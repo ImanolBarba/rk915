@@ -18,8 +18,8 @@
 #include <linux/err.h>
 #include <linux/syscalls.h>
 #include <linux/fs.h>
-#include <asm/uaccess.h>
-#include <linux/rfkill-wlan.h>
+#include <linux/uaccess.h>
+#include <linux/of_irq.h>
 #include <linux/sched.h>
 #include <linux/kthread.h>
 #include <linux/workqueue.h>
@@ -74,90 +74,12 @@ struct device *hal_get_dev(void)
 }
 
 //extern u32 mmc_debug_level;
-extern int sdio_reset_comm(struct mmc_card *card);
 //static unsigned char resetdata[1024];
 static bool sdio_reset;
 int _sdio_reset(struct host_io_info *host)
 {
-#if 1
 	sdio_reset = true;
 	return 0;
-#else
-	struct sdio_func *func = (struct sdio_func *)host->priv_data;
-	//struct mmc_host *shost = func->card->host;
-	int ret, error, value, i;
-
-	sdio_reset = true;
-//	mmc_debug_level = 0xFFFF;
-
-	printk(" start _sdio_reset ... \n");
-	mdelay(2000);
-
-	if (sdio_reset_comm(func->card))
-		pr_err("sdio_reset_comm fail!!!\n");
-
-	sdio_claim_host(func);
-
-	ret = sdio_enable_func(func);
-	if (ret) {
-		pr_err("%s: failed to enable func, error %d\n", __func__, ret);
-		sdio_release_host(func);
-		return -1;
-	}
-
-	/* Interrupt Enable for Function x */
-	sdio_f0_writeb(func, 0x07, 0x04, &error);
-	if (error)
-		goto fail;
-
-	/* Default is GPIO interrupt, if it's "0", DATA1 interrupt */
-	sdio_f0_writeb(func, 0x80, 0x16, &error);
-	if (error)
-		goto fail;
-
-	/* Block Size for Function 0 */
-	error = sdio_set_block_size(func, 512);
-	if (error)
-		goto fail;
-
-	/* It can generate an interrupt to host */
-	sdio_writeb(func, 0x02, 34, &error);
-	if (error)
-		goto fail;
-
-	sdio_writeb(func, 0x02, 33, &error);
-	if (error)
-		goto fail;
-
-	/* clear interrupt to host */
-	value = sdio_readb(func, 32, &error);
-	if (error)
-		goto fail;
-
-	sdio_writeb(func, value, 32, &error);
-	if (error)
-		goto fail;
-
-	for (i = 0; i < 3; i++) {
-		if (sdio_memcpy_fromio(func, resetdata, 0x0000008, 462)) {
-			pr_err("sdio_memcpy_fromio fail!!!\n");
-			mdelay(3000);
-		} else {
-			pr_info("sdio_memcpy_fromio ok !\n");
-			break;
-		}
-	}
-
-	RPU_ERROR_SDIO("TX FW CRASH:\n");
-	pr_err("%s\n", resetdata);
-
-	sdio_release_host(func);
-
-	return 0;
-
-fail:
-	return -1;
-#endif	
 }
 
 #if SUPPORT_SDIO_SLEEP
@@ -536,10 +458,12 @@ static int sdio_probe(struct sdio_func *func, const struct sdio_device_id *id)
 	RPU_DEBUG_SDIO("sdio_func_num: 0x%X, vendor id: 0x%X, dev id: 0x%X, block size: 0x%X/0x%X\n",
 			func->num, func->vendor, func->device, func->max_blksize, func->cur_blksize);
 
-	if (func->num == 1)
+	if (func->num == 1) {
 		gfunc1 = func;
-	else
+		rk915_set_mmc_host(func->card->host);
+	} else {
 		gfunc2 = func;
+	}
 
 	RPU_INFO_SDIO("f1: 0x%p, f2: 0x%p.\n", gfunc1, gfunc2);
 	if (!(gfunc1 && gfunc2)) {
@@ -553,6 +477,12 @@ static int sdio_probe(struct sdio_func *func, const struct sdio_device_id *id)
 		RPU_ERROR_SDIO("%s: failed to enable func, error %d\n", __func__, ret);
 		sdio_release_host(gfunc1);
 		return -1;
+	}
+	ret = sdio_set_block_size(gfunc1, 512);
+	if (ret) {
+		RPU_ERROR_SDIO("%s: failed to set block size, error %d\n", __func__, ret);
+	} else {
+		RPU_INFO_SDIO("%s: block size set to 512.\n", __func__);
 	}
 	RPU_INFO_SDIO("%s: enable func ok.\n", __func__);
 	sdio_release_host(gfunc1);
@@ -672,6 +602,22 @@ void rk915_sdio_unregister_driver(void)
 void rk915_sdio_pre_init(void)
 {
     sema_init(&powerup_sem, 0);
+
+    /*
+     * The chip may already be powered (pull-up or SoC default on GPIO0_A2).
+     * If so, the MMC core detected the SDIO card at boot and sdio_probe()
+     * would fire immediately during sdio_register_driver(), setting gfunc1
+     * before rk915_sdio_init() gets a chance to power-cycle.
+     *
+     * Force a power-off here so the stale card is removed from MMC.
+     * rk915_sdio_init() will then see gfunc1==NULL, power on fresh,
+     * and trigger a clean card detection with proper SDIO bus negotiation
+     * and the chip's boot ROM in firmware-download mode.
+     */
+    rk915_poweroff();
+    msleep(100);
+    rk915_rescan_card(0);
+    msleep(600);
 }
 
 int rk915_sdio_init(struct host_io_info *phost)
@@ -710,7 +656,25 @@ reinit:
 	host->dev = &gfunc1->dev;
 
 	host->io_ops = &sdio_host_ops;
-	host->irq = rockchip_wifi_get_oob_irq();
+	/* Get OOB IRQ from device tree if available, else use SDIO in-band */
+	{
+		int irq_ret = of_irq_get(gfunc1->dev.of_node, 0);
+		if (irq_ret <= 0) {
+			/* Try parent node (mmc host) */
+			struct device_node *np = of_find_compatible_node(NULL, NULL, "rockchip,rk915");
+			if (np) {
+				irq_ret = of_irq_get(np, 0);
+				of_node_put(np);
+			}
+		}
+		if (irq_ret <= 0) {
+			RPU_INFO_SDIO("No OOB IRQ found, using SDIO in-band interrupts\n");
+			host->irq = 0;
+		} else {
+			RPU_INFO_SDIO("OOB IRQ resolved: irq=%d\n", irq_ret);
+			host->irq = irq_ret;
+		}
+	}
 #if SDIO_AUTO_SLEEP
 	// init delay sleep worker
 	INIT_DELAYED_WORK(&host->sleep_work, sleep_timer_expiry);

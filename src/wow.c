@@ -32,7 +32,7 @@ check_econ_ps_cfg_complete:
 
 	if (!econ_ps_cfg_done && (count < PS_ECON_CFG_TIMEOUT_TICKS)) {
 		count++;
-		current->state = TASK_INTERRUPTIBLE;
+		__set_current_state(TASK_INTERRUPTIBLE);
 		schedule_timeout(1);
 		goto check_econ_ps_cfg_complete;
 	}
@@ -57,7 +57,7 @@ check_all_cmd_done:
 
 	if (cmd_info.outstanding_ctrl_req && (count < msecs_to_jiffies(1000))) {
 		count++;
-		current->state = TASK_INTERRUPTIBLE;
+		__set_current_state(TASK_INTERRUPTIBLE);
 		schedule_timeout(1);
 		goto check_all_cmd_done;
 	}

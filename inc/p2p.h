@@ -15,12 +15,8 @@ int remain_on_channel(struct ieee80211_hw *hw,
 			     struct ieee80211_channel *channel,
 			     int duration,
 			     enum ieee80211_roc_type type);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0))
 int cancel_remain_on_channel(struct ieee80211_hw *hw,
 				struct ieee80211_vif *vif);
-#else
-int cancel_remain_on_channel(struct ieee80211_hw *hw);
-#endif
 void rpu_noa_event(int event, struct umac_event_noa *noa, void *context,
 			   struct sk_buff *skb);
 #endif /* _P2P_H_*/

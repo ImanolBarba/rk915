@@ -1,9 +1,12 @@
 #ifndef __RK915_PLATFORM_H_
 #define __RK915_PLATFORM_H_
 
+struct mmc_host; /* forward declaration */
+
 void rk915_poweroff(void);
 void rk915_poweron(void);
 void rk915_rescan_card(unsigned insert);
+void rk915_set_mmc_host(struct mmc_host *host);
 int rk915_platform_bus_init(struct host_io_info *phost);
 int rk915_platform_bus_rec_init(struct host_io_info *phost);
 int rk915_platform_bus_deinit(struct host_io_info *phost);
